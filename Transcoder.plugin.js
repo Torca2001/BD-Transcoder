@@ -2,6 +2,7 @@
 * @name Transcoder
 * @displayName Transcoder
 * @authorId 97842053588713472
+* @version 0.0.8
 */
 /*@cc_on
 @if (@_jscript)
