@@ -41,7 +41,7 @@ module.exports = (() => {
                     github_username: "Torca"
                 }
             ],
-            version: "0.0.7",
+            version: "0.0.8",
             description: "Transcode uploaded videos to fit within file size limit",
             github: "https://github.com/Torca2001/BD-Transcoder",
             github_raw: "https://raw.githubusercontent.com/Torca2001/BD-Transcoder/main/Transcoder.plugin.js"
