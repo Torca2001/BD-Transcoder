@@ -2,7 +2,7 @@
 * @name Transcoder
 * @displayName Transcoder
 * @authorId 97842053588713472
-* @version 0.0.8
+* @version 0.0.9
 */
 /*@cc_on
 @if (@_jscript)
@@ -42,7 +42,7 @@ module.exports = (() => {
                     github_username: "Torca"
                 }
             ],
-            version: "0.0.8",
+            version: "0.0.9",
             description: "Transcode uploaded videos to fit within file size limit",
             github: "https://github.com/Torca2001/BD-Transcoder",
             github_raw: "https://raw.githubusercontent.com/Torca2001/BD-Transcoder/main/Transcoder.plugin.js"
@@ -534,7 +534,7 @@ module.exports = (() => {
                 getSettingsPanel() {
                     const panel = this.buildSettingsPanel();
                     panel.addListener(() => {
-                        this.forceUpdateAll();
+                        //this.forceUpdateAll();
                     });
                     return panel.getElement();
                 }
@@ -651,6 +651,8 @@ module.exports = (() => {
                 }
 
                 async beginEncode(index){
+                    if (this.encodeQueue.length <= index) return;
+
                     if (this.encodeQueue[index].started == false){
                         const id = this.encodeQueue[index].id;
                         const encodeItem = this.encodeQueue[index];
@@ -705,10 +707,20 @@ module.exports = (() => {
                             funcArgs.push('-t');
                             funcArgs.push(toTimeFormat(encodeItem.endTime));
                         }
+                        
+                        if (!isNaN(encodeItem.width) && Number(encodeItem.width) > 0 && Number(encodeItem.width) < encodeItem.metadata.video_width){
+                            funcArgs.push('-vf');
+                            funcArgs.push(`scale=${Number(encodeItem.width)}:-1:flags=bicubic`);
+                        } else if (!isNaN(encodeItem.height) && Number(encodeItem.height) > 0 && Number(encodeItem.height) < encodeItem.metadata.video_height){
+                            funcArgs.push('-vf');
+                            funcArgs.push(`scale=-1:${Number(encodeItem.height)}:flags=bicubic`);
+                        }
 
-                        if (encodeItem.twopass){
+                        if (false && encodeItem.twopass){
                             progress.passCount = 2;
 
+                            informEncode(progress);
+                            encodeItem.done();
                         }
                         else{
 
@@ -859,8 +871,8 @@ module.exports = (() => {
                                 metadata.audioStreamsCount = 0;
                                 for (let stream of metadata.streams) {
                                     if (stream.codec_type == "video"){
-                                        metadata.video_height = stream.codec_height;
-                                        metadata.video_width = stream.codec_width;
+                                        metadata.video_height = Number(stream.coded_height);
+                                        metadata.video_width = Number(stream.coded_width);
                                         if (stream.codec_name == "hevc"){
                                             has_HEVC = true;
                                         }
@@ -893,13 +905,9 @@ module.exports = (() => {
                                             let adjustedEnd = metadata.format.duration;
                                             if (!isNaN(editorprompt.props.endTime) && editorprompt.props.endTime > adjustedStart && editorprompt.props.endTime <= adjustedStart + this.calculateMaxtime() && editorprompt.props.endTime < metadata.format.duration - 0.1){
                                                 adjustedEnd = editorprompt.props.endTime;
-                                            }
+                                            }                                            
 
-                                            let newWidth = undefined;
-                                            let newHeight = undefined;
-                                            
-
-                                            this.addToQueue(files[0].path, path.join(localFolder, "tmp.mp4"), this.calculateBitRate(adjustedEnd - adjustedStart), this.settings.codec, adjustedStart, adjustedEnd, this.settings.twoPassEncode, metadata, editorprompt.props.mergeAudio, newWidth, newHeight, (item) => {
+                                            this.addToQueue(files[0].path, path.join(localFolder, "tmp.mp4"), this.calculateBitRate(adjustedEnd - adjustedStart), this.settings.codec, adjustedStart, adjustedEnd, this.settings.twoPassEncode, metadata, editorprompt.props.mergeAudio, this.settings.maxWidth, this.settings.maxHeight, (item) => {
                                                 if (!item.cancelled){
                                                     Logger.info(`Transcode complete - ${files[0].name}` )
                                                     try{
@@ -930,6 +938,7 @@ module.exports = (() => {
                                                     this.encodeUpdate.forEach((func) => {
                                                         func(item.id, {removed: true}, true);
                                                     })
+                                                    this.beginEncode(0);
                                                 }, 1000);
                                             });
                                         },
