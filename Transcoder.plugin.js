@@ -2,7 +2,7 @@
 * @name Transcoder
 * @displayName Transcoder
 * @authorId 97842053588713472
-* @version 0.0.9
+* @version 0.1.0
 */
 /*@cc_on
 @if (@_jscript)
@@ -28,9 +28,6 @@
 
 @else@*/
 
-const { time } = require("console");
-const { encode } = require("punycode");
-
 module.exports = (() => {
     const config = {
         info: {
@@ -42,16 +39,17 @@ module.exports = (() => {
                     github_username: "Torca"
                 }
             ],
-            version: "0.0.9",
+            version: "0.1.0",
             description: "Transcode uploaded videos to fit within file size limit",
             github: "https://github.com/Torca2001/BD-Transcoder",
             github_raw: "https://raw.githubusercontent.com/Torca2001/BD-Transcoder/main/Transcoder.plugin.js"
         },
         changelog: [
             {
-                title: "Plugin exists",
+                title: "More Features",
                 items: [
-                    "Video compression features"
+                    'More video encoding options',
+                    'Image compression, convert images to webp'
                 ]
             }
         ],
@@ -62,6 +60,20 @@ module.exports = (() => {
                 value: "true",
                 name: "Fix extension type",
                 note: "Fix video file extensions to ensure embed"
+            },
+            {
+                type: "switch",
+                id: "compressImages",
+                value: "false",
+                name: "Always Compress images",
+                note: "Any uploaded images will be compressed to webp, otherwise only compress images that exceed file upload size"
+            },
+            {
+                type: "textbox",
+                id: "imageQuality",
+                value: "90",
+                name: "Image quality",
+                note: "1 - 100, Webp image compression quality"
             },
             {
                 type: "switch",
@@ -77,9 +89,9 @@ module.exports = (() => {
                 value: "libx264",
                 name: "Codec",
                 note: "Type of codec to compress",
-                values: [
+                options: [
                     { label: 'H264', value: 'libx264' },
-                    { label: 'VP9', value: 'vp9' }
+                    { label: 'VP9', value: 'libvpx-vp9' }
                 ]
             },
             {
@@ -158,7 +170,7 @@ module.exports = (() => {
     } : (([Plugin, Api]) => {
         const plugin = (Plugin, Api) => {
 
-            const {DiscordModules: {React, DiscordConstants}, Utilities, WebpackModules, PluginUtilities, DiscordModules, Patcher, Logger, Toasts} = Api;
+            const {DiscordModules: {React, DiscordConstants}, Utilities, WebpackModules, PluginUtilities, DiscordModules, DiscordClasses, Patcher, Logger, Toasts} = Api;
             const PromptToUpload = WebpackModules.getByProps("promptToUpload");
             const ChatLayer = WebpackModules.find(m => m.default?.displayName == "ChatLayer");
             const presentBar = BdApi.findModuleByProps("jumpToPresentBar").jumpToPresentBar;
@@ -170,6 +182,12 @@ module.exports = (() => {
 
             const localFolder = path.join(__dirname, "encoder");
             const ffmpegPath = path.join(localFolder, "ffmpeg\\bin");
+
+            const encodeType = {
+                video: "video",
+                audio: "audio",
+                image: "image"
+            }
 
             class TimeStampInputText extends React.Component {
                 constructor(props) {
@@ -264,15 +282,28 @@ module.exports = (() => {
             
                 render(){
                     let perc = undefined;
-                    if (this.state.progress != undefined && this.state.progress.out_time_ms != undefined && this.state.totalTime > 0){
-                        perc = Math.round(this.state.progress.out_time_ms / 10000 / this.state.totalTime);
+                    if (this.state.progress != undefined){
+                        if (this.state.progress.out_time_ms != undefined && this.state.totalTime > 0){
+                            perc = Math.round(this.state.progress.out_time_ms / 10000 / this.state.totalTime);
+                        }
+                        else if (this.state._this.encodeQueue.length > 0 && this.state._this.encodeQueue[0].encodeType == encodeType.image){
+                            if (this.state.progress.out_time_ms >= 1000){
+                                perc = 100;
+                            } else {
+                                perc = 0;
+                            }
+                        }
+                    }
+
+                    if (this.state.progress == undefined) {
+                        this.state.progress = {};
                     }
 
                     let headerList = [
                         React.createElement('div', {
                             className: '',
                             children: [
-                                React.createElement('span', {}, `${this.state.progress.pass}/${this.state.progress.passCount}`),
+                                React.createElement('span', {}, `${this.state._this.encodeQueue.length} left`),
                                 React.createElement('span', {}, `${perc ? perc : 0}%`)
                             ]
                         }),
@@ -308,7 +339,7 @@ module.exports = (() => {
                                 React.createElement(
                                     Button,
                                     {
-                                        className: ``,
+                                        className: `TranscoderCancelButton`,
                                         onClick: () => {
                                             if (this.state._this.encodeQueue.length > 0 && this.state._this.encodeQueue[0].started && !this.state._this.encodeQueue[0].cancelled){
                                                 this.state._this.encodeQueue[0].cancel();
@@ -377,8 +408,7 @@ module.exports = (() => {
             class videoEditor extends BdApi.React.Component {
                 constructor(props) {
                     super(props);
-        
-            
+
                     this.state = {
                         _this: props._this,
                         metadata: props.metadata,
@@ -391,6 +421,7 @@ module.exports = (() => {
                         FileSize: formatBytes(props.filesize) + "~",
                         calculateBitRate: props.calculateBitRate,
                         mergeAudio: true,
+                        codec: props._this.settings.codec,
                     };
         
                     this.props.startTime = 0;
@@ -516,8 +547,21 @@ module.exports = (() => {
         
                     items.push(React.createElement('video', {width: "100%", height: 230, controls: true, id: "transcoderPreviewVid", disablePictureInPicture: true, controlslist: 'nodownload', src: this.state.url}));
                     items.push(React.createElement('div', {className: "trimDiv",children: [start, durationdiv, end]}));
-                    items.push(React.createElement(DiscordModules.SwitchRow, {children: "Merge audio", note: "", onChange: () => {this.props.mergeAudio = !this.state.mergeAudio; this.setState({mergeAudio: !this.state.mergeAudio})}, value: this.state.mergeAudio}));
-        
+                    items.push(React.createElement('div', {className: DiscordClasses.Dividers.divider + " " + DiscordClasses.Dividers.dividerDefault}));
+                    items.push(React.createElement(DiscordModules.SwitchRow, {className: DiscordClasses.Dividers.dividerDefault, children: "Merge audio", disabled: this.state.metadata.audioStreamsCount < 2,note: "", onChange: () => {this.props.mergeAudio = !this.state.mergeAudio; this.setState({mergeAudio: !this.state.mergeAudio})}, value: this.state.mergeAudio}));
+                    items.push(React.createElement(DiscordModules.Dropdown, {
+                        value: this.state.codec,
+                        onChange: (value, _) => {
+                            this.setState({codec: value})
+                            this.state._this.settings.codec = value;
+                            PluginUtilities.saveSettings(this.state._this.settings);
+                        },
+                        options: [
+                            { label: 'H264', value: 'libx264' },
+                            { label: 'VP9', value: 'libvpx-vp9' }
+                        ]
+                    }));
+                            
                     return React.createElement("div", {children: items});
                 }
             }
@@ -623,10 +667,36 @@ module.exports = (() => {
                     }
                 }
 
-                async addToQueue(filepath, outputPath, bitrate = 100, codec = "h264", startTime = 0, endTime = 0, twopass = false, metadata, mergeAudio, width, height, endCall){
-                    if (fs.existsSync(filepath) && endTime > 0) {
+                async addImageToQueue(file, quality, endCall){
+                    if (file != undefined) {
+                        if (isNaN(quality) || quality > 100){
+                            quality = 100
+                        } else if (quality < 1){
+                            quality = 1
+                        }
+
                         let item = {
-                            filepath: filepath,
+                            encodeType: encodeType.image,
+                            file: file,
+                            started: false,
+                            quality: quality,
+                            log: "",
+                            id: Math.random().toString(36).slice(2),
+                            cancelled: false,
+                            cancel: () => {},
+                        }
+
+                        item.done = (buff) => {endCall(item, buff)};
+                        this.encodeQueue.push(item);
+                        this.beginEncode(0);
+                    }
+                }
+
+                async addVideoToQueue(file, outputPath, bitrate = 100, codec = "h264", startTime = 0, endTime = 0, twopass = false, metadata, mergeAudio, width, height, endCall){
+                    if (file != undefined && endTime > 0) {
+                        let item = {
+                            encodeType: encodeType.video,
+                            file: file,
                             outputPath: outputPath,
                             bitrate: bitrate,
                             codec: codec,
@@ -654,6 +724,12 @@ module.exports = (() => {
                     if (this.encodeQueue.length <= index) return;
 
                     if (this.encodeQueue[index].started == false){
+                        let ffmpeg = undefined;
+                        let ffmpegLocation = path.join(ffmpegPath, "ffmpeg.exe");
+                        if (this.hasLocalFFMPEG){
+                            ffmpegLocation = "ffmpeg";
+                        }
+
                         const id = this.encodeQueue[index].id;
                         const encodeItem = this.encodeQueue[index];
                         encodeItem.started = true;
@@ -677,109 +753,185 @@ module.exports = (() => {
                             trimming: false,
                         };
 
-                        let ffmpeg = undefined;
-                        let ffmpegLocation = path.join(ffmpegPath, "ffmpeg.exe");
-                        if (this.hasLocalFFMPEG){
-                            ffmpegLocation = "ffmpeg";
-                        }
-
                         encodeItem.cancelled = false;
                         encodeItem.cancel = () => {
                             encodeItem.cancelled = true;
                             ffmpeg?.stdin.write('q');
                         }
 
-                        let frameRate = 30;
-                        if (!isNaN(this.settings.maxfps) && Number(this.settings.maxfps) > 1){
-                            frameRate = Number(this.settings.maxfps);
-                        }
-                        let funcArgs = ['-i', encodeItem.filepath, '-c:v', encodeItem.codec, '-b:v', `${encodeItem.bitrate}k`, '-r', frameRate];
-                        if (!isNaN(encodeItem.startTime) && encodeItem.startTime > 0){
-                            funcArgs.unshift(toTimeFormat(encodeItem.startTime));
-                            funcArgs.unshift('-ss');
+                        switch (encodeItem.encodeType){
+                            case encodeType.image:
+                                let chunks = []
+                                ffmpeg = spawn('ffmpeg', ['-i', 'pipe:0', '-quality', encodeItem.quality, '-f', 'webp', '-progress', 'pipe:3', '-stats_period', '0.01', 'pipe:1'], {
+                                    stdio: ['pipe', 'pipe', 'pipe', 'pipe']
+                                });
 
-                            if (!isNaN(encodeItem.endTime) && encodeItem.endTime > encodeItem.startTime && encodeItem.duration >= encodeItem.endTime){
-                                funcArgs.push('-t');
-                                funcArgs.push(toTimeFormat(encodeItem.endTime - encodeItem.startTime));
-                            }
-                        }
-                        else if (!isNaN(encodeItem.endTime) && encodeItem.endTime > 0 && encodeItem.duration >= encodeItem.endTime){
-                            funcArgs.push('-t');
-                            funcArgs.push(toTimeFormat(encodeItem.endTime));
-                        }
-                        
-                        if (!isNaN(encodeItem.width) && Number(encodeItem.width) > 0 && Number(encodeItem.width) < encodeItem.metadata.video_width){
-                            funcArgs.push('-vf');
-                            funcArgs.push(`scale=${Number(encodeItem.width)}:-1:flags=bicubic`);
-                        } else if (!isNaN(encodeItem.height) && Number(encodeItem.height) > 0 && Number(encodeItem.height) < encodeItem.metadata.video_height){
-                            funcArgs.push('-vf');
-                            funcArgs.push(`scale=-1:${Number(encodeItem.height)}:flags=bicubic`);
-                        }
+                                ffmpeg.stdout.on('data', function(data) {
+                                    chunks.push(data);
+                                });
 
-                        if (false && encodeItem.twopass){
-                            progress.passCount = 2;
+                                ffmpeg.stderr.on('data', function(data) {
+                                    //console.log(data.toString());
+                                });
 
-                            informEncode(progress);
-                            encodeItem.done();
-                        }
-                        else{
+                                ffmpeg.stdio[3].on('data', function(data) {
+                                    let tLines = data.toString().split('\n');
+                                    for (let i = 0; i < tLines.length; i++) {
+                                        let key = tLines[i].split('=');
+                                        if (typeof key[0] != 'undefined' && typeof key[1] != 'undefined') {
+                                            progress[key[0]] = key[1];
+                                        }
+                                    }
+                    
+                                    informEncode(progress);
+                                });
+                                informEncode(progress);
 
-                            if (encodeItem.metadata.audioStreamsCount > 1 && encodeItem.mergeAudio){
-                                let audioParams = "";
-                                for (let index = 0; index < encodeItem.metadata.audioStreamsCount; index++) {
-                                    audioParams += `[0:a:${index}]`;
+                                ffmpeg.stdout.on('end', function() {
+                                    encodeItem.done(chunks);
+                                });
+
+                                let reader = encodeItem.file.stream().getReader();
+
+                                function readStream({done, value}) {
+                                    if (done){
+                                        ffmpeg.stdin.end();
+                                        return;
+                                    }
+                                    ffmpeg.stdin.cork();
+                                    ffmpeg.stdin.write(value);
+                                    ffmpeg.stdin.uncork();
+                                    return reader.read().then(readStream);
                                 }
-                                audioParams += "amix=" + encodeItem.metadata.audioStreamsCount + ":longest:weights=";
-                                for (let index = 0; index < encodeItem.metadata.audioStreamsCount; index++) {
-                                    audioParams += "1 ";
+
+                                reader.read().then(readStream);
+
+                                break;
+                            case encodeType.video:
+                                let frameRate = 30;
+                                if (!isNaN(this.settings.maxfps) && Number(this.settings.maxfps) > 1){
+                                    frameRate = Number(this.settings.maxfps);
                                 }
-                                audioParams += "[aout]";
 
-                                funcArgs = funcArgs.concat(['-filter_complex' ,audioParams, '-map', '0:V:0', '-map', '[aout]']);
-                            }
+                                let input = 'pipe:0';
+                                if (encodeItem.file.path.length > 0){
+                                    input = encodeItem.file.path;
+                                }
+                                let funcArgs = ['-i', input, '-c:v', encodeItem.codec, '-b:v', `${encodeItem.bitrate}k`, '-r', frameRate];
+                                if (encodeItem.codec == "libvpx-vp9"){
+                                    funcArgs.push('-row-mt');
+                                    funcArgs.push('1');
+                                    funcArgs.push('-cpu-used');
+                                    funcArgs.push('3');
+                                }
 
-                            ffmpeg = spawn(ffmpegLocation, funcArgs.concat(['-c:a', 'libopus', '-b:a', '64k', '-movflags', '+faststart', '-y', '-progress', 'pipe:1', '-stats_period', '0.1', '-passlogfile', path.join(localFolder, "ffmpegpass0.txt"), encodeItem.outputPath]), )
-                            
-                            informEncode(progress);
-                
-                            ffmpeg.stdout.on('data', function(data) {
-                
-                                let tLines = data.toString().split('\n');
-                                for (let i = 0; i < tLines.length; i++) {
-                                    let key = tLines[i].split('=');
-                                    if (typeof key[0] != 'undefined' && typeof key[1] != 'undefined') {
-                                        progress[key[0]] = key[1];
+                                if (!isNaN(encodeItem.startTime) && encodeItem.startTime > 0){
+                                    funcArgs.unshift(toTimeFormat(encodeItem.startTime));
+                                    funcArgs.unshift('-ss');
+
+                                    if (!isNaN(encodeItem.endTime) && encodeItem.endTime > encodeItem.startTime && encodeItem.duration >= encodeItem.endTime){
+                                        funcArgs.push('-t');
+                                        funcArgs.push(toTimeFormat(encodeItem.endTime - encodeItem.startTime));
                                     }
                                 }
-                
-                                informEncode(progress);
-                            });
+                                else if (!isNaN(encodeItem.endTime) && encodeItem.endTime > 0 && encodeItem.duration >= encodeItem.endTime){
+                                    funcArgs.push('-t');
+                                    funcArgs.push(toTimeFormat(encodeItem.endTime));
+                                }
+                                
+                                if (!isNaN(encodeItem.width) && Number(encodeItem.width) > 0 && Number(encodeItem.width) < encodeItem.metadata.video_width){
+                                    funcArgs.push('-vf');
+                                    funcArgs.push(`scale=${Number(encodeItem.width)}:-1:flags=bicubic`);
+                                } else if (!isNaN(encodeItem.height) && Number(encodeItem.height) > 0 && Number(encodeItem.height) < encodeItem.metadata.video_height){
+                                    funcArgs.push('-vf');
+                                    funcArgs.push(`scale=-1:${Number(encodeItem.height)}:flags=bicubic`);
+                                }
 
-                            /* //example
-                                bitrate: "1836.5kbits/s"
-                                drop_frames: "1016"
-                                dup_frames: "0"
-                                fps: "71.83"
-                                frame: "1020"
-                                out_time: "00:00:34.007229"
-                                out_time_ms: "34007229"
-                                out_time_us: "34007229"
-                                pass: 1
-                                passCount: 1
-                                progress: "end"
-                                speed: "2.39x"
-                                stream_0_0_q: "-1.0"
-                                total_size: "7806674"
-                                trimming: false
-                            */
-                
-                            ffmpeg.stderr.on("data", data => {
-                                //console.log(`stderr: ${data}`);
-                            });
+                                if (false && encodeItem.twopass){
+                                    progress.passCount = 2;
+
+                                    informEncode(progress);
+                                    encodeItem.done();
+                                }
+                                else{
+
+                                    if (encodeItem.metadata.audioStreamsCount > 1 && encodeItem.mergeAudio){
+                                        let audioParams = "";
+                                        for (let index = 0; index < encodeItem.metadata.audioStreamsCount; index++) {
+                                            audioParams += `[0:a:${index}]`;
+                                        }
+                                        audioParams += "amix=" + encodeItem.metadata.audioStreamsCount + ":longest:weights=";
+                                        for (let index = 0; index < encodeItem.metadata.audioStreamsCount; index++) {
+                                            audioParams += "1 ";
+                                        }
+                                        audioParams += "[aout]";
+
+                                        funcArgs = funcArgs.concat(['-filter_complex' ,audioParams, '-map', '0:V:0', '-map', '[aout]']);
+                                    }
+
+                                    ffmpeg = spawn(ffmpegLocation, funcArgs.concat(['-c:a', 'libopus', '-b:a', '64k', '-movflags', '+faststart', '-y', '-progress', 'pipe:1', '-stats_period', '0.1', '-passlogfile', path.join(localFolder, "ffmpegpass0.txt"), encodeItem.outputPath]), )
+                                    
+                                    informEncode(progress);
                         
-                            ffmpeg.stdout.on('end', function() {
-                                encodeItem.done();
-                            });
+                                    ffmpeg.stdout.on('data', function(data) {
+                        
+                                        let tLines = data.toString().split('\n');
+                                        for (let i = 0; i < tLines.length; i++) {
+                                            let key = tLines[i].split('=');
+                                            if (typeof key[0] != 'undefined' && typeof key[1] != 'undefined') {
+                                                progress[key[0]] = key[1];
+                                            }
+                                        }
+                        
+                                        informEncode(progress);
+                                    });
+
+                                    /* //example
+                                        bitrate: "1836.5kbits/s"
+                                        drop_frames: "1016"
+                                        dup_frames: "0"
+                                        fps: "71.83"
+                                        frame: "1020"
+                                        out_time: "00:00:34.007229"
+                                        out_time_ms: "34007229"
+                                        out_time_us: "34007229"
+                                        pass: 1
+                                        passCount: 1
+                                        progress: "end"
+                                        speed: "2.39x"
+                                        stream_0_0_q: "-1.0"
+                                        total_size: "7806674"
+                                        trimming: false
+                                    */
+                        
+                                    ffmpeg.stderr.on("data", data => {
+                                        encodeItem.log += data.toString();
+                                        //console.log(`stderr: ${data}`);
+                                    });
+                                
+                                    ffmpeg.stdout.on('end', function() {
+                                        encodeItem.done();
+                                    });
+
+                                    if (encodeItem.file.path.length <= 0){
+                                        let reader = encodeItem.file.stream().getReader();
+
+                                        function readStream({done, value}) {
+                                            if (done){
+                                                ffmpeg.stdin.end();
+                                                return;
+                                            }
+                                            ffmpeg.stdin.cork();
+                                            ffmpeg.stdin.write(value);
+                                            ffmpeg.stdin.uncork();
+                                            return reader.read().then(readStream);
+                                        }
+
+                                        reader.read().then(readStream);
+                                    }
+                                }
+
+                                break;
                         }
                     }
                 }
@@ -788,7 +940,7 @@ module.exports = (() => {
                 async allPatches(){
                     //patch upload
                     if (PromptToUpload != undefined){
-                        Patcher.instead(PromptToUpload, "promptToUpload", (_, args, ret) => {this.uploadpatch(_, args, ret, this)});
+                        Patcher.instead(PromptToUpload, "promptToUpload", this.uploadpatch.bind(this));
                     }
                     else{
                         Logger.err("Failed to patch file upload");
@@ -846,12 +998,26 @@ module.exports = (() => {
                     }
                 }
             
-                uploadpatch(_, args, originalFunction, _this) {
+                uploadpatch(_, args, originalFunction) {
                     try {
                         let files = args[0];
-                        if (files.length == 1 && files[0].type.startsWith("video/")){
+
+                        let total_size = 0;
+                        let hasImage = false;
+                        for (let file of files) {
+                            if (file.type.startsWith('image/') && file.type != "image/gif"){
+                                hasImage = true;
+                            }
+                            total_size += file.size;
+                        }
+
+                        if (hasImage && total_size > this.getMaxFileSize()){
+                            Toasts.info("Files to large, compressing images");
+                        }
+
+                        if (files.length == 1 && files[0].type.startsWith("video/") && files[0].path && files[0].path != ""){
                             BdApi.showToast('Loading video');
-                            this.getvideoFileMeta(files[0].path, (metaRaw) => {
+                            this.getvideoFileMeta(files[0], (metaRaw) => {
                                 let metadata = {};
                                 try{
                                     metadata = JSON.parse(metaRaw);
@@ -907,11 +1073,11 @@ module.exports = (() => {
                                                 adjustedEnd = editorprompt.props.endTime;
                                             }                                            
 
-                                            this.addToQueue(files[0].path, path.join(localFolder, "tmp.mp4"), this.calculateBitRate(adjustedEnd - adjustedStart), this.settings.codec, adjustedStart, adjustedEnd, this.settings.twoPassEncode, metadata, editorprompt.props.mergeAudio, this.settings.maxWidth, this.settings.maxHeight, (item) => {
+                                            this.addVideoToQueue(files[0], path.join(localFolder, "tmp.mp4"), this.calculateBitRate(adjustedEnd - adjustedStart), this.settings.codec, adjustedStart, adjustedEnd, this.settings.twoPassEncode, metadata, editorprompt.props.mergeAudio, this.settings.maxWidth, this.settings.maxHeight, (item) => {
                                                 if (!item.cancelled){
                                                     Logger.info(`Transcode complete - ${files[0].name}` )
                                                     try{
-                                                        let newFileName = path.basename(item.filepath, path.extname(item.filepath)) + '.mp4'
+                                                        let newFileName = path.basename(item.file.name, path.extname(item.file.name)) + '.mp4'
     
                                                         args[0] = [
                                                             new File([fs.readFileSync(item.outputPath, { flag: "r" })], newFileName, {
@@ -934,12 +1100,12 @@ module.exports = (() => {
 
                                                 //Remove item from queue
                                                 setTimeout(() => {
-                                                    this.encodeQueue = this.encodeQueue.filter((encodeItem) => {encodeItem.id != item.id})
+                                                    this.encodeQueue = this.encodeQueue.filter((encodeItem) => encodeItem.id != item.id)
                                                     this.encodeUpdate.forEach((func) => {
                                                         func(item.id, {removed: true}, true);
                                                     })
                                                     this.beginEncode(0);
-                                                }, 1000);
+                                                }, wait);
                                             });
                                         },
                                         onCancel: () => {
@@ -969,6 +1135,64 @@ module.exports = (() => {
                                 }
                             });
                         }
+                        else if (this.settings.compressImages || (hasImage && total_size > this.getMaxFileSize())){
+                            let newFiles = [];
+                            let count = 0;
+
+                            for (let file of files) {
+                                if (file.type.startsWith('image/') && file.type != "image/gif"){
+                                    this.addImageToQueue(file, this.settings.imageQuality, (item, data) => {
+                                        Logger.info("finished transcoding image " + item.file.name);
+
+                                        count -= 1;
+                                        let newFileName = path.basename(item.file.name, path.extname(item.file.name)) + '.webp';
+
+                                        //Sometimes ffmpeg doesn't set the file size header correctly
+
+                                        let totaldata = Buffer.concat(data);
+                                        if (totaldata.length > 12){
+                                            if (totaldata[4] == 0 && totaldata[5] == 0 && totaldata[6] == 0 && totaldata[7] == 0){
+                                                totaldata = totaldata.copyWithin(4, -4).slice(0, -4);
+                                            }
+                                            
+                                            newFiles.push(new File([totaldata], newFileName, {
+                                                type: "image/webp"
+                                            }));
+                                        } else {
+                                            Toasts.error('Error compressing ' + item.file.name);
+                                            Logger.error("Transcoding " + item.file.name + " Failed, passing original");
+
+                                            //Pass on the original
+                                            newFiles.push(item.file);
+                                        }
+
+
+                                        setTimeout(() => {
+                                            this.encodeQueue = this.encodeQueue.filter((encodeItem) => encodeItem.id != item.id)
+                                            this.encodeUpdate.forEach((func) => {
+                                                func(item.id, {removed: true}, true);
+                                            });
+                                            this.beginEncode(0);
+                                        }, item.cancelled || totaldata.length <= 12 ? 5000 : 100);
+
+                                        if (count == 0){
+                                            args[0] = newFiles;
+                                            originalFunction( ...args);
+                                        }
+                                    });
+                                    count++;
+                                }
+                                else{
+                                    newFiles.push(file);
+                                }
+                            }
+
+                            if (count <= 0){
+                                originalFunction( ...args);
+                            } else {
+                                Toasts.info(`Compressing ${count} images`);
+                            }
+                        }
                         else {
                             originalFunction( ...args);
                         }
@@ -979,14 +1203,19 @@ module.exports = (() => {
                     
                 }
             
-                getvideoFileMeta(filepath, callback){
+                getvideoFileMeta(file, callback){
                     let str = "";
                     let ffmpegpath = this.ffmpegPath + "\\ffprobe.exe";
                     if (this.hasLocalFFMPEG){
                         ffmpegpath = "ffprobe";
                     }
+
+                    let input = 'pipe:0';
+                    if (file.path.length > 0){
+                        input = file.path
+                    }
             
-                    let ffprobe = spawn(ffmpegpath, ['-print_format', 'json', '-loglevel', '0', '-show_format', '-show_streams', filepath], )
+                    let ffprobe = spawn(ffmpegpath, ['-print_format', 'json', '-loglevel', '0', '-show_format', '-show_streams', input], )
                     ffprobe.stdout.on('data', function(data) {
                         str += data;
                     });
@@ -994,6 +1223,23 @@ module.exports = (() => {
                     ffprobe.stdout.on('end', function() {
                         callback(str);
                     });
+
+                    if (file.path.length <= 0){
+                        let reader = file.stream().getReader();
+
+                        function readStream({done, value}) {
+                            if (done){
+                                ffprobe.stdin.end();
+                                return;
+                            }
+                            ffprobe.stdin.cork();
+                            ffprobe.stdin.write(value);
+                            ffprobe.stdin.uncork();
+                            return reader.read().then(readStream);
+                        }
+
+                        reader.read().then(readStream);
+                    }
                 }
             
                 getMaxFileSize(){
@@ -1062,6 +1308,13 @@ module.exports = (() => {
 
                     .timestampInputDivError {
                         color: red;
+                    }
+
+                    .TranscoderCancelButton {
+                        height: 34px;
+                        width: 100px;
+                        min-height: 34px;
+                        min-width: 100px;
                     }
 
                     .timestampInputDiv div input {
