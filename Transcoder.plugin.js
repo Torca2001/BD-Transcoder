@@ -2,7 +2,7 @@
 * @name Transcoder
 * @displayName Transcoder
 * @authorId 97842053588713472
-* @version 0.1.1
+* @version 0.1.2
 */
 /*@cc_on
 @if (@_jscript)
@@ -39,7 +39,7 @@ module.exports = (() => {
                     github_username: "Torca"
                 }
             ],
-            version: "0.1.1",
+            version: "0.1.2",
             description: "Transcode uploaded videos to fit within file size limit",
             github: "https://github.com/Torca2001/BD-Transcoder",
             github_raw: "https://raw.githubusercontent.com/Torca2001/BD-Transcoder/main/Transcoder.plugin.js"
@@ -764,7 +764,7 @@ module.exports = (() => {
                         switch (encodeItem.encodeType){
                             case encodeType.image:
                                 let chunks = []
-                                ffmpeg = spawn('ffmpeg', ['-i', 'pipe:0', '-quality', encodeItem.quality, '-f', 'webp', '-progress', 'pipe:3', '-stats_period', '0.01', 'pipe:1'], {
+                                ffmpeg = spawn(ffmpegLocation, ['-i', 'pipe:0', '-quality', encodeItem.quality, '-f', 'webp', '-progress', 'pipe:3', '-stats_period', '0.01', 'pipe:1'], {
                                     stdio: ['pipe', 'pipe', 'pipe', 'pipe']
                                 });
 
