@@ -2,7 +2,7 @@
 * @name Transcoder
 * @displayName Transcoder
 * @authorId 97842053588713472
-* @version 0.1.0
+* @version 0.1.1
 */
 /*@cc_on
 @if (@_jscript)
@@ -39,7 +39,7 @@ module.exports = (() => {
                     github_username: "Torca"
                 }
             ],
-            version: "0.1.0",
+            version: "0.1.1",
             description: "Transcode uploaded videos to fit within file size limit",
             github: "https://github.com/Torca2001/BD-Transcoder",
             github_raw: "https://raw.githubusercontent.com/Torca2001/BD-Transcoder/main/Transcoder.plugin.js"
@@ -49,7 +49,8 @@ module.exports = (() => {
                 title: "More Features",
                 items: [
                     'More video encoding options',
-                    'Image compression, convert images to webp'
+                    'Image compression, convert images to webp',
+                    'Fixed bug in loading'
                 ]
             }
         ],
@@ -146,7 +147,7 @@ module.exports = (() => {
         ]
     };
     
-    return !global.ZeresPluginLibrary ? class {
+    return !global.ZLibrary ? class {
         constructor() { this._config = config; }
         getName() { return config.info.name; }
         getAuthor() { return config.info.authors.map(a => a.name).join(", "); }
@@ -592,6 +593,7 @@ module.exports = (() => {
 
                     //Check if there is a local ffmpeg available
                     this.checkLocalFFMPEG().then((t) => {
+                        t = false;
                         this.hasLocalFFMPEG = t;
                         if (t == false){
 
@@ -1160,7 +1162,7 @@ module.exports = (() => {
                                             }));
                                         } else {
                                             Toasts.error('Error compressing ' + item.file.name);
-                                            Logger.error("Transcoding " + item.file.name + " Failed, passing original");
+                                            Logger.err("Transcoding " + item.file.name + " Failed, passing original");
 
                                             //Pass on the original
                                             newFiles.push(item.file);
@@ -1205,9 +1207,9 @@ module.exports = (() => {
             
                 getvideoFileMeta(file, callback){
                     let str = "";
-                    let ffmpegpath = this.ffmpegPath + "\\ffprobe.exe";
+                    let ffmpegLoc = path.join(ffmpegPath, "ffprobe.exe");
                     if (this.hasLocalFFMPEG){
-                        ffmpegpath = "ffprobe";
+                        ffmpegLoc = "ffprobe";
                     }
 
                     let input = 'pipe:0';
@@ -1215,7 +1217,7 @@ module.exports = (() => {
                         input = file.path
                     }
             
-                    let ffprobe = spawn(ffmpegpath, ['-print_format', 'json', '-loglevel', '0', '-show_format', '-show_streams', input], )
+                    let ffprobe = spawn(ffmpegLoc, ['-print_format', 'json', '-loglevel', '0', '-show_format', '-show_streams', input], )
                     ffprobe.stdout.on('data', function(data) {
                         str += data;
                     });
