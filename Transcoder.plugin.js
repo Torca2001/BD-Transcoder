@@ -593,8 +593,7 @@ module.exports = (() => {
 
                     //Check if there is a local ffmpeg available
                     this.checkLocalFFMPEG().then((t) => {
-                        t = false;
-                        this.hasLocalFFMPEG = t;
+                        this.hasLocalFFMPEG = !!t;
                         if (t == false){
 
                             if (!fs.existsSync(path.join(localFolder, "ffmpeg"))){
