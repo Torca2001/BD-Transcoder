@@ -2,7 +2,7 @@
 * @name Transcoder
 * @displayName Transcoder
 * @authorId 97842053588713472
-* @version 0.1.2
+* @version 0.1.3
 */
 /*@cc_on
 @if (@_jscript)
@@ -39,7 +39,7 @@ module.exports = (() => {
                     github_username: "Torca"
                 }
             ],
-            version: "0.1.2",
+            version: "0.1.3",
             description: "Transcode uploaded videos to fit within file size limit",
             github: "https://github.com/Torca2001/BD-Transcoder",
             github_raw: "https://raw.githubusercontent.com/Torca2001/BD-Transcoder/main/Transcoder.plugin.js"
@@ -48,9 +48,7 @@ module.exports = (() => {
             {
                 title: "More Features",
                 items: [
-                    'More video encoding options',
-                    'Image compression, convert images to webp',
-                    'Fixed bug in loading'
+                    'Added nvenc encoding'
                 ]
             }
         ],
@@ -92,7 +90,8 @@ module.exports = (() => {
                 note: "Type of codec to compress",
                 options: [
                     { label: 'H264', value: 'libx264' },
-                    { label: 'VP9', value: 'libvpx-vp9' }
+                    { label: 'VP9', value: 'libvpx-vp9' },
+                    { label: 'H264 Nvenc', value: 'h264_nvenc' }
                 ]
             },
             {
@@ -559,7 +558,8 @@ module.exports = (() => {
                         },
                         options: [
                             { label: 'H264', value: 'libx264' },
-                            { label: 'VP9', value: 'libvpx-vp9' }
+                            { label: 'VP9', value: 'libvpx-vp9' },
+                            { label: 'H264 Nvenc', value: 'h264_nvenc' }
                         ]
                     }));
                             
